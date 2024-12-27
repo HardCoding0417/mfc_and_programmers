@@ -207,7 +207,13 @@
     <None Include="res\myProject.rc2" />
   </ItemGroup>
   <ItemGroup>
+    <Image Include="res\3D Switch.PNG" />
+    <Image Include="res\bitmap1.bmp" />
     <Image Include="res\myProject.ico" />
+    <Image Include="res\off.bmp" />
+    <Image Include="res\off3.bmp" />
+    <Image Include="res\on.bmp" />
+    <Image Include="res\on3.png" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

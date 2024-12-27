@@ -20,6 +20,7 @@ class CAboutDlg : public CDialogEx
 public:
 	CAboutDlg();
 
+
 // 대화 상자 데이터입니다.
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_ABOUTBOX };
@@ -48,10 +49,19 @@ END_MESSAGE_MAP()
 
 // CmyProjectDlg 대화 상자
 
-
-
 CmyProjectDlg::CmyProjectDlg(CWnd* pParent /*=nullptr*/)
 	: CDialogEx(IDD_MYPROJECT_DIALOG, pParent)
+	, m_nEditX1(300) // 좌표값들
+	, m_nEditY1(300)
+	, m_nEditX2(500)
+	, m_nEditY2(300)
+	, m_nGray(80)
+	, m_nRadius(10)
+	, m_currentX(0)     // 현재 X 좌표 초기화
+	, m_currentY(0)     // 현재 Y 좌표 초기화
+	, m_isActionActive(false)
+	, m_nMoveSpeed(5)
+	, m_nSaveFrequency(0)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -59,6 +69,12 @@ CmyProjectDlg::CmyProjectDlg(CWnd* pParent /*=nullptr*/)
 void CmyProjectDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
+	DDX_Text(pDX, IDC_EDIT_X1, m_nEditX1);
+	DDX_Text(pDX, IDC_EDIT_Y1, m_nEditY1);
+	DDX_Text(pDX, IDC_EDIT_X2, m_nEditX2);
+	DDX_Text(pDX, IDC_EDIT_Y2, m_nEditY2);
+	DDX_Text(pDX, IDC_EDIT_SPEED, m_nMoveSpeed);
+	DDX_Text(pDX, IDC_EDIT_SAVEFREQUENCY, m_nSaveFrequency);
 }
 
 BEGIN_MESSAGE_MAP(CmyProjectDlg, CDialogEx)
@@ -66,6 +82,8 @@ BEGIN_MESSAGE_MAP(CmyProjectDlg, CDialogEx)
 	ON_WM_PAINT()
 	ON_WM_QUERYDRAGICON()
 	ON_BN_CLICKED(IDC_BUTTON_DRAW, &CmyProjectDlg::OnBnClickedButtonDraw)
+	ON_BN_CLICKED(IDC_BUTTON_ACTION, &CmyProjectDlg::OnBnClickedButtonAction)
+	ON_BN_CLICKED(IDC_BUTTON_OPEN, &CmyProjectDlg::OnBnClickedButtonOpen)
 END_MESSAGE_MAP()
 
 
@@ -154,18 +172,269 @@ HCURSOR CmyProjectDlg::OnQueryDragIcon()
 	return static_cast<HCURSOR>(m_hIcon);
 }
 
+///
+///
+/// 내가 작성한 함수들
+///
+/// 
 
-
-void CmyProjectDlg::OnBnClickedButtonDraw()
+// m_image에서 발생한 작업을 실제로 디스플레이에 표기하기 위한 함수
+void CmyProjectDlg::UpdateDisplay()
 {
-	// TODO: 여기에 컨트롤 알림 처리기 코드를 추가합니다.
-	int nWidth = 640;
-	int nHeight = 320;
-	int nBpp = 8;
-
-	m_image.Create(nWidth, nHeight, nBpp);
-
 	CClientDC dc(this);
 	m_image.Draw(dc, 0, 0);
-
 }
+
+
+// 버튼 클릭 시 초기화 + 원 그리기
+void CmyProjectDlg::OnBnClickedButtonDraw()
+{
+	UpdateData(TRUE);
+
+	// 에딧 컨트롤에서 중심 좌표 받아오기
+	int centerX = m_nEditX1;
+	int centerY = m_nEditY1;
+
+	// 반지름과 색상 값을 변경
+	m_nRadius = (rand() % 41) + 10; // 랜덤 반지름 10~50
+	m_nGray = 80;                  // 회색 값
+
+	InitDisplay(); // 화면 초기화
+	DrawCircle(centerX, centerY, m_nRadius); // 받은 좌표로 원 그리기
+}
+
+// 초기화 후 하얀 캔버스를 그려주는 함수
+void CmyProjectDlg::InitDisplay()
+{
+	int nWidth = 640; // 이미지 너비
+	int nHeight = 640; // 이미지 높이
+	int nBpp = 8; // 픽셀 깊이 (8비트 흑백 이미지)
+
+	// 이전 리소스 해제
+	if (m_image.IsDIBSection()) {
+		m_image.Destroy(); // 기존 이미지를 제거
+	}
+	// 이미지 생성
+	if (!m_image.Create(nWidth, -nHeight, nBpp)) {
+		AfxMessageBox(_T("이미지 생성에 실패했습니다."));
+		return;
+	}
+
+	// 흑백만 쓰기 위한 색상 팔레트
+	if (nBpp == 8) {
+		static RGBQUAD rgb[256];
+		for (int i = 0; i < 256; i++) {
+			rgb[i].rgbRed = rgb[i].rgbGreen = rgb[i].rgbBlue = i;
+		}
+		m_image.SetColorTable(0, 256, rgb); // 팔레트 설정
+	}
+
+	int nPitch = m_image.GetPitch(); // 이미지 한 줄의 바이트 수
+	unsigned char *fm = (unsigned char *)m_image.GetBits(); // 이미지 데이터 포인터
+	memset(fm, 0xff, nPitch * nHeight); // 픽셀을 흰색으로 초기화
+
+	UpdateDisplay(); // 초기화된 이미지를 화면에 표시
+}
+
+
+// 원을 그려주는 함수.
+void CmyProjectDlg::DrawCircle(int centerX, int centerY, int radius)
+{
+	int nWidth = m_image.GetWidth();
+	int nHeight = m_image.GetHeight();
+	int nPitch = m_image.GetPitch(); // 이미지 한 줄의 바이트 수
+	unsigned char *fm = (unsigned char *)m_image.GetBits(); // 이미지에 대한 포인터
+
+	// 원을 그리는 루프
+	for (int y = -m_nRadius; y <= m_nRadius; y++) {
+		for (int x = -m_nRadius; x <= m_nRadius; x++) {
+			if (x * x + y * y <= m_nRadius * m_nRadius) { // 원 방정식 사용
+				int px = centerX + x;
+				int py = centerY + y;
+
+				// 유효한 좌표인지 확인
+				if (px >= 0 && px < nWidth && py >= 0 && py < nHeight) {
+					fm[py * nPitch + px] = m_nGray; // 픽셀을 회색으로 설정
+				}
+			}
+		}
+	}
+
+	UpdateDisplay(); // 변경된 이미지를 화면에 표시
+}
+
+bool CmyProjectDlg::moveCircle(int &currentX, int &currentY, int targetX, int targetY)
+{
+	int nWidth = m_image.GetWidth();
+	int nHeight = m_image.GetHeight();
+	int nPitch = m_image.GetPitch();
+	unsigned char *fm = (unsigned char *)m_image.GetBits();
+
+	// 이미지를 흰색으로 초기화
+	memset(fm, 0xff, nPitch * nHeight);
+
+	// 현재 위치에 원 그리기 (반지름과 색상은 멤버 변수 사용)
+	DrawCircle(currentX, currentY, m_nRadius);
+
+	// X 방향 이동
+	if (currentX != targetX) {
+		int deltaX = (targetX > currentX) ? m_nMoveSpeed : -m_nMoveSpeed;
+		if (abs(targetX - currentX) < abs(deltaX)) {
+			currentX = targetX; // 목표 좌표를 넘지 않도록 보정
+		}
+		else {
+			currentX += deltaX;
+		}
+	}
+
+	// Y 방향 이동
+	if (currentY != targetY) {
+		int deltaY = (targetY > currentY) ? m_nMoveSpeed : -m_nMoveSpeed;
+		if (abs(targetY - currentY) < abs(deltaY)) {
+			currentY = targetY; // 목표 좌표를 넘지 않도록 보정
+		}
+		else {
+			currentY += deltaY;
+		}
+	}
+
+	// 목표 좌표에 도달했는지 확인
+	return (currentX == targetX && currentY == targetY);
+}
+
+void CmyProjectDlg::SaveImage(int stepCount)
+{
+	// 저장 경로 설정 (프로젝트 폴더의 "saved_images" 디렉터리)
+	CString savePath;
+	savePath.Format(_T(".\\images\\image_step_%04d.bmp"), stepCount);
+
+	// 폴더가 없으면 생성
+	CreateDirectory(_T(".\\images"), nullptr);
+
+	// 이미지 저장
+	if (!m_image.IsNull()) {
+		HRESULT hr = m_image.Save(savePath);
+		if (FAILED(hr)) {
+			AfxMessageBox(_T("이미지 저장 실패!"));
+		}
+	}
+}
+
+
+void CmyProjectDlg::OnBnClickedButtonAction()
+{
+	// 에디트 컨트롤로부터 좌표, 속도, 저장 빈도 읽기
+	UpdateData(TRUE); // 컨트롤 값을 멤버 변수에 반영
+	int currentX = m_nEditX1;
+	int currentY = m_nEditY1;
+	int targetX = m_nEditX2;
+	int targetY = m_nEditY2;
+	int saveFrequency = m_nSaveFrequency; // 저장 빈도
+
+	int stepCount = 0; // 이동 단계 카운터
+
+	// 이동 애니메이션 실행
+	while (true) {
+		if (moveCircle(currentX, currentY, targetX, targetY)) {
+			break; // 목표 좌표에 도달하면 반복 종료
+		}
+
+		// 저장 빈도에 따라 이미지 저장
+		if (saveFrequency > 0 && stepCount % saveFrequency == 0) {
+			SaveImage(stepCount);
+		}
+
+		stepCount++; // 이동 단계 증가
+		Sleep(10);   // 10ms 대기
+	}
+}
+
+
+//BOOL CmyProjectDlg::validImgPos(int x, int y)
+//{
+//	int nWidth = m_image.GetWidth();
+//	int nHeight = m_image.GetHeight();
+//
+//	CRect rect(0, 0, nWidth, nHeight);
+//	return rect.PtInRect(CPoint(x, y));
+//
+//}
+
+void CmyProjectDlg::OnBnClickedButtonOpen()
+{
+	// 파일 열기 대화상자 초기화
+	CFileDialog fileDlg(TRUE, _T("bmp"), nullptr,
+		OFN_FILEMUSTEXIST | OFN_HIDEREADONLY,
+		_T("BMP Files (*.bmp)|*.bmp||"),
+		this);
+
+	if (fileDlg.DoModal() == IDOK) {
+		CString filePath = fileDlg.GetPathName(); // 선택한 파일 경로
+
+		// 기존 이미지 해제
+		if (!m_image.IsNull()) {
+			m_image.Destroy();
+		}
+
+		// 이미지 로드
+		HRESULT hr = m_image.Load(filePath);
+		if (FAILED(hr)) {
+			AfxMessageBox(_T("이미지 로드 실패!"));
+			return;
+		}
+
+		// 다이얼로그 크기에 맞게 이미지를 중앙에 표시하기 위해 좌표 계산
+		CClientDC dc(this);
+		CRect rect;
+		GetClientRect(&rect);
+
+		int imgWidth = m_image.GetWidth();
+		int imgHeight = m_image.GetHeight();
+
+		// 이미지 출력
+		m_image.Draw(dc, 0, 0);
+
+		// 원의 중심 찾기
+		int nPitch = m_image.GetPitch();
+		unsigned char *fm = (unsigned char *)m_image.GetBits();
+
+		int sumX = 0, sumY = 0, count = 0;
+		for (int y = 0; y < imgHeight; y++) {
+			for (int x = 0; x < imgWidth; x++) {
+				if (fm[y * nPitch + x] < 255) { // 흰색이 아닌 픽셀
+					sumX += x;
+					sumY += y;
+					count++;
+				}
+			}
+		}
+
+		if (count > 0) {
+			int centerX = sumX / count;
+			int centerY = sumY / count;
+
+			// X 모양 그리기
+			CPen pen(PS_SOLID, 2, RGB(255, 0, 0)); // 빨간색 펜 생성
+			CPen *pOldPen = dc.SelectObject(&pen);
+
+			dc.MoveTo(centerX - 10, centerY - 10); // 좌측 상단에서 우측 하단으로 선
+			dc.LineTo(centerX + 10, centerY + 10);
+
+			dc.MoveTo(centerX - 10, centerY + 10); // 좌측 하단에서 우측 상단으로 선
+			dc.LineTo(centerX + 10, centerY - 10);
+
+			dc.SelectObject(pOldPen); // 이전 펜 복원
+
+			// 좌표값 표시
+			CString coordText;
+			coordText.Format(_T("(%d, %d)"), centerX, centerY);
+			dc.TextOutW(centerX + 15, centerY - 15, coordText);
+		}
+		else {
+			AfxMessageBox(_T("이미지에서 원을 찾을 수 없습니다."));
+		}
+	}
+}
+
+
+
