@@ -4,6 +4,7 @@
 
 #pragma once
 
+#define WM_ACTION_COMPLETE (WM_USER + 100)
 
 // CmyProjectDlg 대화 상자
 class CmyProjectDlg : public CDialogEx
@@ -33,6 +34,7 @@ public:
 protected:
 	HICON m_hIcon;
 	void UpdateDisplay();
+	afx_msg LRESULT OnActionComplete(WPARAM wParam, LPARAM lParam);
 
 	// 생성된 메시지 맵 함수
 	virtual BOOL OnInitDialog();

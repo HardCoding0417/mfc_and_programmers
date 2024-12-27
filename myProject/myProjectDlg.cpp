@@ -84,6 +84,7 @@ BEGIN_MESSAGE_MAP(CmyProjectDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_DRAW, &CmyProjectDlg::OnBnClickedButtonDraw)
 	ON_BN_CLICKED(IDC_BUTTON_ACTION, &CmyProjectDlg::OnBnClickedButtonAction)
 	ON_BN_CLICKED(IDC_BUTTON_OPEN, &CmyProjectDlg::OnBnClickedButtonOpen)
+	ON_MESSAGE(WM_USER + 100, &CmyProjectDlg::OnActionComplete)
 END_MESSAGE_MAP()
 
 
@@ -178,15 +179,16 @@ HCURSOR CmyProjectDlg::OnQueryDragIcon()
 ///
 /// 
 
-// m_image에서 발생한 작업을 실제로 디스플레이에 표기하기 위한 함수
+#include <thread>
+
+// 화면 업데이트 함수
 void CmyProjectDlg::UpdateDisplay()
 {
 	CClientDC dc(this);
 	m_image.Draw(dc, 0, 0);
 }
 
-
-// 버튼 클릭 시 초기화 + 원 그리기
+// 그리기 버튼
 void CmyProjectDlg::OnBnClickedButtonDraw()
 {
 	UpdateData(TRUE);
@@ -236,8 +238,7 @@ void CmyProjectDlg::InitDisplay()
 	UpdateDisplay(); // 초기화된 이미지를 화면에 표시
 }
 
-
-// 원을 그려주는 함수.
+// 원을 그려주는 함수
 void CmyProjectDlg::DrawCircle(int centerX, int centerY, int radius)
 {
 	int nWidth = m_image.GetWidth();
@@ -252,7 +253,7 @@ void CmyProjectDlg::DrawCircle(int centerX, int centerY, int radius)
 				int px = centerX + x;
 				int py = centerY + y;
 
-				// 유효한 좌표인지 확인
+				// m_image 내의 좌표인지 확인
 				if (px >= 0 && px < nWidth && py >= 0 && py < nHeight) {
 					fm[py * nPitch + px] = m_nGray; // 픽셀을 회색으로 설정
 				}
@@ -263,6 +264,7 @@ void CmyProjectDlg::DrawCircle(int centerX, int centerY, int radius)
 	UpdateDisplay(); // 변경된 이미지를 화면에 표시
 }
 
+// 원을 움직이는 함수
 bool CmyProjectDlg::moveCircle(int &currentX, int &currentY, int targetX, int targetY)
 {
 	int nWidth = m_image.GetWidth();
@@ -277,10 +279,10 @@ bool CmyProjectDlg::moveCircle(int &currentX, int &currentY, int targetX, int ta
 	DrawCircle(currentX, currentY, m_nRadius);
 
 	// X 방향 이동
-	if (currentX != targetX) {
-		int deltaX = (targetX > currentX) ? m_nMoveSpeed : -m_nMoveSpeed;
-		if (abs(targetX - currentX) < abs(deltaX)) {
-			currentX = targetX; // 목표 좌표를 넘지 않도록 보정
+	if (currentX != targetX) { // 목표에 도달하지 않았다면
+		int deltaX = (targetX > currentX) ? m_nMoveSpeed : -m_nMoveSpeed; // 이동할 방향( + | - )과 속도를 계산
+		if (abs(targetX - currentX) < abs(deltaX)) { // 만약 속도가 빨라서 목표 위치를 넘어갈 것 같다면
+			currentX = targetX; // 그냥 목표 좌표에 바로 도착
 		}
 		else {
 			currentX += deltaX;
@@ -291,22 +293,23 @@ bool CmyProjectDlg::moveCircle(int &currentX, int &currentY, int targetX, int ta
 	if (currentY != targetY) {
 		int deltaY = (targetY > currentY) ? m_nMoveSpeed : -m_nMoveSpeed;
 		if (abs(targetY - currentY) < abs(deltaY)) {
-			currentY = targetY; // 목표 좌표를 넘지 않도록 보정
+			currentY = targetY;
 		}
 		else {
 			currentY += deltaY;
 		}
 	}
 
-	// 목표 좌표에 도달했는지 확인
+	// 목표 좌표에 도달했음을 알림
 	return (currentX == targetX && currentY == targetY);
 }
 
+// 이미지를 저장하는 함수
 void CmyProjectDlg::SaveImage(int stepCount)
 {
 	// 저장 경로 설정 (프로젝트 폴더의 "saved_images" 디렉터리)
 	CString savePath;
-	savePath.Format(_T(".\\images\\image_step_%04d.bmp"), stepCount);
+	savePath.Format(_T(".\\images\\%03d_step.bmp"), stepCount);
 
 	// 폴더가 없으면 생성
 	CreateDirectory(_T(".\\images"), nullptr);
@@ -320,9 +323,15 @@ void CmyProjectDlg::SaveImage(int stepCount)
 	}
 }
 
-
+// 액션 버튼
 void CmyProjectDlg::OnBnClickedButtonAction()
 {
+	// 중복 실행 방지 플래그
+	if (m_isActionActive) return;
+
+	// 플래그 1
+	m_isActionActive = true;
+
 	// 에디트 컨트롤로부터 좌표, 속도, 저장 빈도 읽기
 	UpdateData(TRUE); // 컨트롤 값을 멤버 변수에 반영
 	int currentX = m_nEditX1;
@@ -330,48 +339,58 @@ void CmyProjectDlg::OnBnClickedButtonAction()
 	int targetX = m_nEditX2;
 	int targetY = m_nEditY2;
 	int saveFrequency = m_nSaveFrequency; // 저장 빈도
+	int stepCount = 0;                    // 이동 단계 카운터
 
-	int stepCount = 0; // 이동 단계 카운터
+	// 스레드 실행. 모든 외부 값 변수를 복사하여 스레드에 전달하는 람다[]가 있음. 이 람다는 값들을 const로 전달함
+	// this는 스레드가 CmyProjectDlg 밖에서 실행되기 때문에 포인터로 넘겨주기 위해 필요
+	// mutable을 붙이면 const가 아니게 되어 수정 가능해짐. =와 x에만 영향을 미침.
+	std::thread actionThread([=, this]() mutable {
+		// 이동 애니메이션 실행
+		while (true) {
+			if (moveCircle(currentX, currentY, targetX, targetY)) {
+				break; // 목표 좌표에 도달하면 반복 종료
+			}
 
-	// 이동 애니메이션 실행
-	while (true) {
-		if (moveCircle(currentX, currentY, targetX, targetY)) {
-			break; // 목표 좌표에 도달하면 반복 종료
+			// 저장 빈도에 따라 이미지 저장
+			if (saveFrequency > 0 && stepCount % saveFrequency == 0) {
+				SaveImage(stepCount);
+			}
+
+			stepCount++;
+			std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 더 정밀
 		}
 
-		// 저장 빈도에 따라 이미지 저장
-		if (saveFrequency > 0 && stepCount % saveFrequency == 0) {
-			SaveImage(stepCount);
-		}
+		// 작업 완료 메시지 전송 (비동기)
+		PostMessage(WM_ACTION_COMPLETE); // 이를 통해 OnActionComplate를 실행
+		});
 
-		stepCount++; // 이동 단계 증가
-		Sleep(10);   // 10ms 대기
-	}
+	actionThread.detach(); // 스레드가 진행되도록 냅두고(detach) 이후의 코드를 실행
 }
 
+// 메세지에 대한 답변을 LRESULT로 반환함. bool임
+// WPARAM, LPARAM는 메세지와 함께 전달되는 변수. 여기서는 사용 안함.(그러나 없앨 순 업승ㅁ. mfc가 강제함)
+LRESULT CmyProjectDlg::OnActionComplete(WPARAM wParam, LPARAM lParam)
+{
+	m_isActionActive = false; // 작업 상태 플래그를 종료 상태로 변경
+	// 필요한 UI 업데이트
+	UpdateData(FALSE);
+	return 0;
+}
 
-//BOOL CmyProjectDlg::validImgPos(int x, int y)
-//{
-//	int nWidth = m_image.GetWidth();
-//	int nHeight = m_image.GetHeight();
-//
-//	CRect rect(0, 0, nWidth, nHeight);
-//	return rect.PtInRect(CPoint(x, y));
-//
-//}
-
+// Open 버튼
 void CmyProjectDlg::OnBnClickedButtonOpen()
 {
-	// 파일 열기 대화상자 초기화
+	// 파일 탐색창 초기화
 	CFileDialog fileDlg(TRUE, _T("bmp"), nullptr,
 		OFN_FILEMUSTEXIST | OFN_HIDEREADONLY,
 		_T("BMP Files (*.bmp)|*.bmp||"),
 		this);
 
+	// 파일 탐색창에서 이미지를 선택했다면
 	if (fileDlg.DoModal() == IDOK) {
-		CString filePath = fileDlg.GetPathName(); // 선택한 파일 경로
+		CString filePath = fileDlg.GetPathName(); // 선택한 이미지의 경로
 
-		// 기존 이미지 해제
+		// Dlg창의 기존 이미지를 해제 (교체해야 하니까)
 		if (!m_image.IsNull()) {
 			m_image.Destroy();
 		}
@@ -394,7 +413,7 @@ void CmyProjectDlg::OnBnClickedButtonOpen()
 		// 이미지 출력
 		m_image.Draw(dc, 0, 0);
 
-		// 원의 중심 찾기
+		// 원의 중심 찾기. 흰색이 아닌 픽셀들의 중심값을 계산.
 		int nPitch = m_image.GetPitch();
 		unsigned char *fm = (unsigned char *)m_image.GetBits();
 
@@ -423,7 +442,7 @@ void CmyProjectDlg::OnBnClickedButtonOpen()
 			dc.MoveTo(centerX - 10, centerY + 10); // 좌측 하단에서 우측 상단으로 선
 			dc.LineTo(centerX + 10, centerY - 10);
 
-			dc.SelectObject(pOldPen); // 이전 펜 복원
+			dc.SelectObject(pOldPen); // 펜 초기화
 
 			// 좌표값 표시
 			CString coordText;
@@ -435,6 +454,5 @@ void CmyProjectDlg::OnBnClickedButtonOpen()
 		}
 	}
 }
-
 
 
